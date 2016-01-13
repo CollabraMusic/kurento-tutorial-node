@@ -52,6 +52,9 @@ ws.onmessage = function(message) {
 	case 'iceCandidate':
 		webRtcPeer.addIceCandidate(parsedMessage.candidate)
 		break;
+	case 'load':
+		videoOutput.src = parsedMessage.name;
+		break;
 	default:
 		if (state == I_AM_STARTING) {
 			setState(I_CAN_START);

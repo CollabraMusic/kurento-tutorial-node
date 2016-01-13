@@ -23,11 +23,12 @@ var ws = require('ws');
 var kurento = require('kurento-client');
 var fs    = require('fs');
 var https = require('https');
+var uuid = require('uuid');
 
 var argv = minimist(process.argv.slice(2), {
     default: {
         as_uri: 'https://localhost:8443/',
-        ws_uri: 'ws://localhost:8888/kurento'
+        ws_uri: 'ws://192.168.99.100:8888/kurento'
     }
 });
 
@@ -122,6 +123,10 @@ wss.on('connection', function(ws) {
             break;
 
         case 'stop':
+            ws.send(JSON.stringify({
+              id : 'load',
+              name : sessions[sessionId].name
+            }));
             stop(sessionId);
             break;
 
@@ -132,7 +137,7 @@ wss.on('connection', function(ws) {
         default:
             ws.send(JSON.stringify({
                 id : 'error',
-                message : 'Invalid message ' + message
+                message : sessions[sessionId].name
             }));
             break;
         }
@@ -177,7 +182,7 @@ function start(sessionId, ws, sdpOffer, callback) {
                 return callback(error);
             }
 
-            createMediaElements(pipeline, ws, function(error, webRtcEndpoint) {
+            createMediaElements(pipeline, sessionId, function(error, webRtcEndpoint, recorderEndpoint, name) {
                 if (error) {
                     pipeline.release();
                     return callback(error);
@@ -190,7 +195,7 @@ function start(sessionId, ws, sdpOffer, callback) {
                     }
                 }
 
-                connectMediaElements(webRtcEndpoint, function(error) {
+                connectMediaElements(webRtcEndpoint, recorderEndpoint, function(error) {
                     if (error) {
                         pipeline.release();
                         return callback(error);
@@ -212,8 +217,10 @@ function start(sessionId, ws, sdpOffer, callback) {
 
                         sessions[sessionId] = {
                             'pipeline' : pipeline,
-                            'webRtcEndpoint' : webRtcEndpoint
-                        }
+                            'webRtcEndpoint' : webRtcEndpoint,
+                            'recorderEndpoint' : recorderEndpoint,
+                            'name': name
+                        };
                         return callback(null, sdpAnswer);
                     });
 
@@ -228,21 +235,29 @@ function start(sessionId, ws, sdpOffer, callback) {
     });
 }
 
-function createMediaElements(pipeline, ws, callback) {
+function createMediaElements(pipeline, sessionId, callback) {
     pipeline.create('WebRtcEndpoint', function(error, webRtcEndpoint) {
         if (error) {
             return callback(error);
         }
 
-        return callback(null, webRtcEndpoint);
+        var name = uuid.v4() + '.webm';
+        pipeline.create('RecorderEndpoint', {uri: 'file:///var/temp/' + name}, function(error, recorderEndpoint) {
+            if (error) {
+                return callback(error);
+            }
+
+            return callback(null, webRtcEndpoint, recorderEndpoint, name);
+        });
     });
 }
 
-function connectMediaElements(webRtcEndpoint, callback) {
-    webRtcEndpoint.connect(webRtcEndpoint, function(error) {
+function connectMediaElements(webRtcEndpoint, recorderEndpoint, callback) {
+    webRtcEndpoint.connect(recorderEndpoint, function(error) {
         if (error) {
             return callback(error);
         }
+        recorderEndpoint.record();
         return callback(null);
     });
 }
@@ -250,6 +265,8 @@ function connectMediaElements(webRtcEndpoint, callback) {
 function stop(sessionId) {
     if (sessions[sessionId]) {
         var pipeline = sessions[sessionId].pipeline;
+        var recorderEndpoint = sessions[sessionId].recorderEndpoint;
+        recorderEndpoint.stop();
         console.info('Releasing pipeline');
         pipeline.release();
 
